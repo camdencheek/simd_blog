@@ -74,7 +74,7 @@ Modern CPUs do this thing called [_instruction pipelining_](https://en.wikipedia
 
 In our simple implementation, we have data dependencies between our loop iterations. A couple, in fact. Both `i` and `sum` have a read/write pair each iteration, meaning an iteration cannot start executing until the previous is finished.
 
-A common method of squeezing more out of our CPUs in situations like this is known as [_loop unrolling_](https://en.wikipedia.org/wiki/Loop_unrolling). The basic idea is to rewrite our loop so more of our relatively-high-latency multiply instructions can execute simultaneously.
+A common method of squeezing more out of our CPUs in situations like this is known as [_loop unrolling_](https://en.wikipedia.org/wiki/Loop_unrolling). The basic idea is to rewrite our loop so more of our relatively-high-latency multiply instructions can execute simultaneously. Additionally, it amortizes the fixed loop costs (increment and compare) across multiple operations.
 
 ```go
 func DotUnroll4(a, b []float32) float32 {
@@ -90,7 +90,7 @@ func DotUnroll4(a, b []float32) float32 {
 }
 ```
 
-In our unrolled code, the dependencies between multiply instructions are removed, enabling the CPU to take more advantage of pipelining. This trims 27% from our naive implementation.
+In our unrolled code, the dependencies between multiply instructions are removed, enabling the CPU to take more advantage of pipelining. This increases our throughput by TODO% compared to our naive implementation.
 
 <div class="chart-container">
     <div class="bar">
@@ -103,13 +103,7 @@ In our unrolled code, the dependencies between multiply instructions are removed
     </div>
 </div>
 
-```
-    │  naive.txt  │            unroll4.txt             │
-    │   sec/op    │   sec/op     vs base               │
-Dot   561.0m ± 0%   405.5m ± 0%  -27.71% (p=0.001 n=7)
-```
-
-Note that we can actually improve this slightly more by twiddling with the number of iterations we unroll. On my machine, 8 seemed to be optimal. However, the improvement is platform dependent and fairly minimal, so for the rest of the post, I'll stick with an unroll depth of 4 for readability.
+Note that we can actually improve this slightly more by twiddling with the number of iterations we unroll. On the benchmark machine, 8 seemed to be optimal, but on my laptop, 4 performs best. However, the improvement is quite platform dependent and fairly minimal, so for the rest of the post, I'll stick with an unroll depth of 4 for readability.
 
 ## Bounds-checking elimination
 
@@ -121,19 +115,19 @@ The compiled code makes it look like we wrote somthing like this:
 func DotUnroll4(a, b []float32) float32 {
 	sum := float32(0)
 	for i := 0; i < len(a); i += 4 {
-        if i >= len(b) {
+        if i >= cap(b) {
             panic("out of bounds")
         }
 		s0 := a[i] * b[i]
-        if i+1 >= len(a) || i+1 >= len(b) {
+        if i+1 >= cap(a) || i+1 >= cap(b) {
             panic("out of bounds")
         }
 		s1 := a[i+1] * b[i+1]
-        if i+2 >= len(a) || i+2 >= len(b) {
+        if i+2 >= cap(a) || i+2 >= cap(b) {
             panic("out of bounds")
         }
 		s2 := a[i+2] * b[i+2]
-        if i+3 >= len(a) || >= len(b) {
+        if i+3 >= cap(a) || >= cap(b) {
             panic("out of bounds")
         }
 		s3 := a[i+3] * b[i+3]
@@ -145,13 +139,9 @@ func DotUnroll4(a, b []float32) float32 {
 
 In a hot loop like this, even with modern branch prediction, the additional branches per iteration can add up to a pretty significant performance penalty. This is especially true in our case because the inserted jumps limit how much we can take advantage of pipelining.
 
-To assess the impact of bounds checking, a trick I recently learned is to use the `-gcflags="-B"` option. It builds the binary without the bounds checks, allowing you to compare benchmarks with and without bounds checking. The comparison indicates that bounds checking accounts for roughly 2.5% of the remaining time.
+To assess the impact of bounds checking, a trick I recently learned is to use the `-gcflags="-B"` option. It builds the binary without the bounds checks, allowing you to compare benchmarks with and without bounds checking. The comparison indicates that bounds checking reduces throughput by roughly TODO%.
 
-```sh
-$ benchstat <(go test -bench /unroll4 -count=5) <(go test -bench /unroll4 -count=5 -gcflags="-B")
-               │   sec/op    │   sec/op     vs base              │
-Dot/unroll4-44   412.0m ± 0%   402.0m ± 1%  -2.43% (p=0.002 n=6)
-```
+TODO: insert benchmarks
 
 That's small enough that it probably wouldn't even be worth poking at. However, running this locally on an M1 mac yields a difference of over 30%, so I'm still going to go through the exercise of removing these checks.
 
@@ -199,7 +189,7 @@ We've improved execution speed of our code pretty dramatically at this point, bu
 
 In our situation, we're searching over vectors with 1536 dimensions. With 4-byte elements, this comes out to 6KiB per vector, and we generate roughly a million vectors per GiB of code. That adds up.
 
-When searching the vectors, they need to be held in RAM, which puts some serious memory pressure on our deployments. Moving the vectors out of memory would mean loading them from disk at search time, which is a no-go when performance is so important.
+When searching the vectors, they need to be held in RAM, which puts some serious memory pressure on our deployments. Moving the vectors out of memory would mean loading them from disk at search time, which is a no-go when performance is so critical.
 
 There are [plenty of ways](https://en.wikipedia.org/wiki/Dimensionality_reduction) to compress vectors, but we'll be talking about [_integer quantization_](https://huggingface.co/docs/optimum/concept_guides/quantization), which is relatively simple, but effective. The idea is to reduce the precision of the 4-byte `float32` vector elements by converting them to 1-byte `int8`s.
 
@@ -231,16 +221,76 @@ Re-running the benchmarks shows we suffer a perf hit from this change. Taking a 
 
 ## SIMD
 
-I wanted an excuse to play with SIMD. And this problem seemed like the perfect nail for that hammer.
+I always love an excuse to play with SIMD. And this problem seemed like the perfect nail for that hammer.
 
-For those unfamiliar, SIMD stands for "Single Instruction Multiple Data". Basically, it lets you run an operation over a bunch of pieces of data with a single instruction. This is exactly what we want to do to calculate the dot product.
+For those unfamiliar, SIMD stands for "Single Instruction Multiple Data". Just like it's says, it lets you run an operation over a bunch of pieces of data with a single instruction. This is exactly what we want for calculating a dot product.
 
 We have a problem though. Go does not expose SIMD intrinsics like [C](https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html) or [Rust](https://doc.rust-lang.org/beta/core/simd/index.html). We have two options here: write it in C and use Cgo, or write it by hand for Go's assembler.
 I try hard to avoid Cgo whenever possible for [many reasons that are not at all original](https://dave.cheney.net/2016/01/18/cgo-is-not-go), but one of those reasons is that Cgo imposes a performance penalty, and performance of this piece is paramount. Also, getting my hands dirty with some assembly sounds fun, so that's what I'm going to do.
 
 I want this routine to be reasonably portable, so I'm going to restrict myself to only AVX2 instructions, which are supported on most `x86_64` server CPUs these days. We can use [runtime feature detection](TODO) to fall back to a slower option in pure Go.
 
-The full code can be found [here](TODO). I'm not going to copy it all here, but I'll pick out some interesting tidbits.
+<detail>
+<summary>The full assembly implementation</summary>
+
+```asm
+#include "textflag.h"
+
+TEXT ·DotAVX2(SB), NOSPLIT, $0-52
+	// Offsets based on slice header offsets.
+	// To check, use `GOARCH=amd64 go vet`
+	MOVQ a_base+0(FP), AX
+	MOVQ b_base+24(FP), BX
+	MOVQ a_len+8(FP), DX
+
+	XORQ R8, R8 // return sum
+
+	// Zero Y0, which will store 8 packed 32-bit sums
+	VPXOR Y0, Y0, Y0
+
+// In blockloop, we calculate the dot product 16 at a time
+blockloop:
+	CMPQ DX, $16
+	JB reduce
+
+	// Sign-extend 16 bytes into 16 int16s
+	VPMOVSXBW (AX), Y1
+	VPMOVSXBW (BX), Y2
+
+	// Multiply words vertically to form doubleword intermediates,
+	// then add adjacent doublewords.
+	VPMADDWD Y1, Y2, Y1
+
+	// Add results to the running sum
+	VPADDD Y0, Y1, Y0
+
+	ADDQ $16, AX
+	ADDQ $16, BX
+	SUBQ $16, DX
+	JMP blockloop
+
+reduce:
+	// X0 is the low bits of Y0.
+	// Extract the high bits into X1, fold in half, add, repeat.
+	VEXTRACTI128 $1, Y0, X1
+	VPADDD X0, X1, X0
+
+	VPSRLDQ $8, X0, X1
+	VPADDD X0, X1, X0
+
+	VPSRLDQ $4, X0, X1
+	VPADDD X0, X1, X0
+
+	// Store the reduced sum
+	VMOVD X0, R8
+
+end:
+	MOVL R8, ret+48(FP)
+	VZEROALL
+	RET
+```
+
+</detail>
 
 The core loop of the implementation depends on three main instructions:
 
@@ -252,12 +302,7 @@ The core loop of the implementation depends on three main instructions:
 
 Let's see what this earned us.
 
-```
-cpu: Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz
-    │   bce.txt    │             nosimd.txt              │              simd.txt              │
-    │    sec/op    │    sec/op     vs base               │   sec/op     vs base               │
-Dot   359.85m ± 1%   422.83m ± 0%  +17.50% (p=0.001 n=7)   75.16m ± 1%  -79.11% (p=0.001 n=7)
-```
+TODO: insert benchmarks
 
 Woah! That's a 79% reduction from our previous best (before we switched to `int8`). SIMD for the win 🚀
 
@@ -269,15 +314,99 @@ That said, compared to Cgo, there are some nice benefits. Debugging still works 
 
 Previously, we limited ourselves to AVX2, but what if we _didn't_? The VNNI extension to AVX-512 added the [`VPDPBUSD`](https://www.felixcloutier.com/x86/vpdpbusd) instruction, which computes the dot product on `int8` vectors rather than `int16`s. This means we can process four times as many elements in a single instruction because we don't have to convert to `int16` first and our vector width doubles with AVX-512!
 
-The only problem is that the instruction requires one vector to be signed bytes, and the other to be _unsigned_ bytes. Both of our vectors are signed. We can employ [a trick from Intel's developer guide](https://www.intel.com/content/www/us/en/docs/onednn/developer-guide-reference/2023-0/nuances-of-int8-computations.html#DOXID-DEV-GUIDE-INT8-COMPUTATIONS-1DG-I8-COMP-S12) to help us out. Basically, add 128 to one of our vectors to ensure it's in range of an unsigned integer, then keep track of how much overshoot we need to correct for at the end. The code can be found [here](TODO).
+The only problem is that the instruction requires one vector to be signed bytes, and the other to be _unsigned_ bytes. Both of our vectors are signed. We can employ [a trick from Intel's developer guide](https://www.intel.com/content/www/us/en/docs/onednn/developer-guide-reference/2023-0/nuances-of-int8-computations.html#DOXID-DEV-GUIDE-INT8-COMPUTATIONS-1DG-I8-COMP-S12) to help us out. Basically, add 128 to one of our vectors to ensure it's in range of an unsigned integer, then keep track of how much overshoot we need to correct for at the end.
+
+
+<detail>
+<summary>
+
+Full code for `DotVNNI`
+
+</summary>
+
+```asm
+#include "textflag.h"
+
+// DotVNNI calculates the dot product of two slices using AVX512 VNNI
+// instructions The slices must be of equal length and that length must be a
+// multiple of 64.
+TEXT ·DotVNNI(SB), NOSPLIT, $0-52
+	// Offsets based on slice header offsets.
+	// To check, use `GOARCH=amd64 go vet`
+	MOVQ a_base+0(FP), AX
+	MOVQ b_base+24(FP), BX
+	MOVQ a_len+8(FP), DX
+
+    ADDQ AX, DX // end pointer
+
+	// Zero our accumulators
+	VPXORQ Z0, Z0, Z0 // positive
+	VPXORQ Z1, Z1, Z1 // negative
+
+	// Fill Z2 with 128
+	MOVD $0x80808080, R9
+	VPBROADCASTD R9, Z2
+
+blockloop:
+	CMPQ AX, DX
+	JE reduce
+
+	VMOVDQU8 (AX), Z3
+	VMOVDQU8 (BX), Z4
+
+	// The VPDPBUSD instruction calculates of the dot product 4 columns at a
+	// time, accumulating into an i32 vector. The problem is it expects one
+	// vector to be unsigned bytes and one to be signed bytes. To make this
+	// work, we make one of our vectors unsigned by adding 128 to each element.
+	// This causes us to overshoot, so we keep track of the amount we need
+	// to compensate by so we can subtract it from the sum at the end.
+	//
+	// Effectively, we are calculating SUM((Z3 + 128) · Z4) - 128 * SUM(Z4).
+    //
+    // The idea for this comes from this doc:
+    // https://www.intel.com/content/www/us/en/docs/onednn/developer-guide-reference/2023-0/nuances-of-int8-computations.html#DOXID-DEV-GUIDE-INT8-COMPUTATIONS-1DG-I8-COMP-S12
+
+	VPADDB Z3, Z2, Z3   // add 128 to Z3, making it unsigned
+	VPDPBUSD Z4, Z3, Z0 // Z0 += Z3 dot Z4
+	VPDPBUSD Z4, Z2, Z1 // Z1 += broadcast(128) dot Z4
+
+	ADDQ $64, AX
+	ADDQ $64, BX
+	JMP blockloop
+
+reduce:
+    // Subtract the overshoot from our calculated dot product
+	VPSUBD Z1, Z0, Z0 // Z0 -= Z1
+
+    // Sum Z0 horizontally. There is no horizontal sum instruction, so instead
+    // we sum the upper and lower halves of Z0, fold it in half again, and
+    // repeat until we are down to 1 element that contains the final sum.
+    VEXTRACTI64X4 $1, Z0, Y1
+    VPADDD Y0, Y1, Y0
+
+	VEXTRACTI128 $1, Y0, X1
+	VPADDD X0, X1, X0
+
+	VPSRLDQ $8, X0, X1
+	VPADDD X0, X1, X0
+
+	VPSRLDQ $4, X0, X1
+	VPADDD X0, X1, X0
+
+	// Store the reduced sum
+	VMOVD X0, R8
+
+end:
+	MOVL R8, ret+48(FP)
+	VZEROALL
+	RET
+```
+
+</detail>
 
 This implementation yielded another 21% improvement. Not bad!
 
-```
-    │  simd.txt   │              vnni.txt              │
-    │   sec/op    │   sec/op     vs base               │
-Dot   75.16m ± 1%   59.13m ± 1%  -21.33% (p=0.001 n=7)
-```
+TODO: insert benchmarks
 
 ## Bonus material
 
@@ -286,3 +415,5 @@ Dot   75.16m ± 1%   59.13m ± 1%  -21.33% (p=0.001 n=7)
 - To avoid distributing multiple binaries, we take advantage of [runtime feature detection](TODO) to seamlessly switch between versions on start up.
 - If you haven't come across it, the [Agner Fog Instruction Tables](https://www.agner.org/optimize/) make for some great reference material for low-level optimizations.
 - Don't miss the [compiler explorer](https://go.godbolt.org/z/qT3M7nPGf), which is an extremely useful tool for digging into compiler codegen.
+- TODO: indexing
+- TODO: GPU acceleration
