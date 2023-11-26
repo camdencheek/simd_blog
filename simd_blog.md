@@ -28,10 +28,6 @@
         margin: 10px;
         text-align: left;
     }
-
-    code {
-        margin: 0;
-    }
 </style>
 
 # From Slow to SIMD: An Optimization Story
