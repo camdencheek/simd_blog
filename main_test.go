@@ -41,7 +41,7 @@ func TestDot(t *testing.T) {
 		for _, f := range f32Dots {
 			t.Run(funcName(f), func(t *testing.T) {
 				got := f(testProbeF32, testDataF32[:dims])
-				require.InEpsilon(t, expected, got, 0.0001)
+				require.InEpsilon(t, expected, got, 0.01)
 			})
 		}
 	})

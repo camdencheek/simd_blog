@@ -44,6 +44,10 @@ func DotBCE(a, b []float32) float32 {
 		panic("slices must have equal lengths")
 	}
 
+	if len(a)%4 != 0 {
+		panic("slice length must be multiple of 4")
+	}
+
 	sum := float32(0)
 	for i := 0; i < len(a); i += 4 {
 		aTmp := a[i : i+4 : i+4]
@@ -96,6 +100,10 @@ func DotInt8Unroll8(a, b []int8) int32 {
 func DotInt8BCE(a, b []int8) int32 {
 	if len(a) != len(b) {
 		panic("slices must have equal lengths")
+	}
+
+	if len(a)%4 != 0 {
+		panic("slice length must be multiple of 4")
 	}
 
 	sum := int32(0)
