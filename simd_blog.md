@@ -1,35 +1,36 @@
 <style>
-    body {
-        font-family: 'Arial', sans-serif;
-        background-color: #f4f4f4;
-        text-align: center;
-        margin: 50px;
-    }
-
     .chart-container {
+        display: grid;
+        grid-template-columns: max-content auto;
         width: 80%;
         margin: 20px auto;
-        border: 1px solid #ccc;
-        border-radius: 8px;
         overflow: hidden;
     }
 
-    .bar {
+    .bar-text {
         display: flex;
-        align-items: center;
-        padding: 10px;
-        background-color: #3498db;
-        color: #fff;
-        margin-bottom: 10px;
+        margin: 10px;
+        grid-column: 1;
     }
 
-    .bar span {
-        flex-grow: 1;
-        text-align: center;
+    .bar-text code {
+        display: flex;
+        grid-column: 1;
     }
 
-    .bar .bar-value {
-        margin-left: 10px;
+    .bar-value {
+        grid-column: 2;
+        background-color: red;
+    }
+
+    .bar-value span {
+        display: flex;
+        margin: 10px;
+        text-align: left;
+    }
+
+    code {
+        margin: 0;
     }
 </style>
 
@@ -93,14 +94,10 @@ func DotUnroll4(a, b []float32) float32 {
 In our unrolled code, the dependencies between multiply instructions are removed, enabling the CPU to take more advantage of pipelining. This increases our throughput by TODO% compared to our naive implementation.
 
 <div class="chart-container">
-    <div class="bar">
-        <span>DotNaive</span>
-        <div class="bar-value" style="width: 100%;">60%</div>
-    </div>
-    <div class="bar">
-        <span>DotUnroll4</span>
-        <div class="bar-value" style="width: 72.3%;">40%</div>
-    </div>
+<div class="bar-text" style="grid-row: 1;"><code>DotNaive</code></div>
+<div class="bar-value" style="grid-row: 1; width: 40%"><span>TODO vectors/s</span></div>
+<div class="bar-text" style="grid-row: 2;"><code>DotUnroll4</code></div>
+<div class="bar-value" style="grid-row: 2; width: 100%;"><span>TODO vectors/s</span></div>
 </div>
 
 Note that we can actually improve this slightly more by twiddling with the number of iterations we unroll. On the benchmark machine, 8 seemed to be optimal, but on my laptop, 4 performs best. However, the improvement is quite platform dependent and fairly minimal, so for the rest of the post, I'll stick with an unroll depth of 4 for readability.
@@ -225,13 +222,13 @@ I always love an excuse to play with SIMD. And this problem seemed like the perf
 
 For those unfamiliar, SIMD stands for "Single Instruction Multiple Data". Just like it's says, it lets you run an operation over a bunch of pieces of data with a single instruction. This is exactly what we want for calculating a dot product.
 
-We have a problem though. Go does not expose SIMD intrinsics like [C](https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html) or [Rust](https://doc.rust-lang.org/beta/core/simd/index.html). We have two options here: write it in C and use Cgo, or write it by hand for Go's assembler.
-I try hard to avoid Cgo whenever possible for [many reasons that are not at all original](https://dave.cheney.net/2016/01/18/cgo-is-not-go), but one of those reasons is that Cgo imposes a performance penalty, and performance of this piece is paramount. Also, getting my hands dirty with some assembly sounds fun, so that's what I'm going to do.
+We have a problem though. Go does not expose SIMD intrinsics like [C](https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html) or [Rust](https://doc.rust-lang.org/beta/core/simd/index.html). We have two options here: write it in C and use Cgo, or write it by hand for Go's assembler. I try hard to avoid Cgo whenever possible for [many reasons that are not at all original](https://dave.cheney.net/2016/01/18/cgo-is-not-go), but one of those reasons is that Cgo imposes a performance penalty, and performance of this snippet is paramount. Also, getting my hands dirty with some assembly sounds fun, so that's what I'm going to do.
 
 I want this routine to be reasonably portable, so I'm going to restrict myself to only AVX2 instructions, which are supported on most `x86_64` server CPUs these days. We can use [runtime feature detection](TODO) to fall back to a slower option in pure Go.
 
-<detail>
-<summary>The full assembly implementation</summary>
+<details>
+
+<summary>Full code for <code>DotAVX2</code></summary>
 
 ```asm
 #include "textflag.h"
@@ -290,7 +287,7 @@ end:
 	RET
 ```
 
-</detail>
+</details>
 
 The core loop of the implementation depends on three main instructions:
 
@@ -316,11 +313,10 @@ Previously, we limited ourselves to AVX2, but what if we _didn't_? The VNNI exte
 
 The only problem is that the instruction requires one vector to be signed bytes, and the other to be _unsigned_ bytes. Both of our vectors are signed. We can employ [a trick from Intel's developer guide](https://www.intel.com/content/www/us/en/docs/onednn/developer-guide-reference/2023-0/nuances-of-int8-computations.html#DOXID-DEV-GUIDE-INT8-COMPUTATIONS-1DG-I8-COMP-S12) to help us out. Basically, add 128 to one of our vectors to ensure it's in range of an unsigned integer, then keep track of how much overshoot we need to correct for at the end.
 
-
-<detail>
+<details>
 <summary>
 
-Full code for `DotVNNI`
+Full code for <code>DotVNNI</code>
 
 </summary>
 
@@ -402,7 +398,7 @@ end:
 	RET
 ```
 
-</detail>
+</details>
 
 This implementation yielded another 21% improvement. Not bad!
 
@@ -411,9 +407,8 @@ TODO: insert benchmarks
 ## Bonus material
 
 - If you haven't used [benchstat](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat), you should. It's great. Super simple statistical comparison of benchmark results.
-- I got [nerd sniped](https://twitter.com/sluongng/status/1654066471230636033) into implementing a [version for ARM](TODO), which made for an interesting comparison.
-- To avoid distributing multiple binaries, we take advantage of [runtime feature detection](TODO) to seamlessly switch between versions on start up.
-- If you haven't come across it, the [Agner Fog Instruction Tables](https://www.agner.org/optimize/) make for some great reference material for low-level optimizations.
 - Don't miss the [compiler explorer](https://go.godbolt.org/z/qT3M7nPGf), which is an extremely useful tool for digging into compiler codegen.
-- TODO: indexing
+- I got [nerd sniped](https://twitter.com/sluongng/status/1654066471230636033) into implementing [a version with ARM NEON](TODO), which made for an interesting comparison.
+- If you haven't come across it, the [Agner Fog Instruction Tables](https://www.agner.org/optimize/) make for some great reference material for low-level optimizations.
+- Probably the best solution to searching large numbers of vectors is to build an index. There are many vector databases (TODO: add links) that can do this, but they all come with new memory/storage/deployment tradeoffs. TODO: maybe add something about qdrant?
 - TODO: GPU acceleration
