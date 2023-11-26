@@ -1,11 +1,39 @@
----
-id: simd_blog
-aliases:
-  - An Optimization Story
-tags: []
----
+<style>
+    body {
+        font-family: 'Arial', sans-serif;
+        background-color: #f4f4f4;
+        text-align: center;
+        margin: 50px;
+    }
 
-# An Optimization Story
+    .chart-container {
+        width: 80%;
+        margin: 20px auto;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .bar {
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        background-color: #3498db;
+        color: #fff;
+        margin-bottom: 10px;
+    }
+
+    .bar span {
+        flex-grow: 1;
+        text-align: center;
+    }
+
+    .bar .bar-value {
+        margin-left: 10px;
+    }
+</style>
+
+# From Slow to SIMD: An Optimization Story
 
 So, there's this function. It's called a lot. More importantly, all those calls are on the critical path of a key user interaction.
 Let's talk about making it fast.
@@ -18,11 +46,11 @@ Spoiler: it's a dot product.
 
 ## Some background (or [skip to the juicy stuff](#the-target))
 
-At Sourcegraph, we're working on a Code AI tool named [Cody](https://sourcegraph.com/cody). In order for Cody to answer questions well, we need to give it (him?) enough information to work with. One of the [ways we do this](https://about.sourcegraph.com/whitepaper/cody-context-architecture.pdf) is by leveraging [embeddings](https://platform.openai.com/docs/guides/embeddings).
+At Sourcegraph, we're working on a Code AI tool named [Cody](https://sourcegraph.com/cody). In order for Cody to answer questions well, we need to give it (him?) enough [context](https://about.sourcegraph.com/blog/cheating-is-all-you-need) to work with. One of the [ways we do this](https://about.sourcegraph.com/whitepaper/cody-context-architecture.pdf) is by leveraging [embeddings](https://platform.openai.com/docs/guides/embeddings).
 
-An embedding is a vector representation of a chunk of text. They are constructed in such a way that semantically similar pieces of text are closer together. When Cody needs some more information, we run a similarity search over the embeddings to fetch a set of related chunks of code and feed those results to Cody to improve the quality of results.
+An [embedding](https://developers.google.com/machine-learning/crash-course/embeddings/video-lecture) is a vector representation of a chunk of text. They are constructed in such a way that semantically similar pieces of text have more similar vectors. When Cody needs more information to answer a query, we run a similarity search over the embeddings to fetch a set of related chunks of code and feed those results to Cody to improve the relevance of results.
 
-The relevant part here is that similarity metric. For similarity search, a common metric is [cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity), which is just the cosine of the angle between two vectors. However, for normalized vectors (vectors with unit magnitude), cosine similarity yields a ranking equivalent to the [dot product](https://en.wikipedia.org/wiki/Dot_product). We do not index our embeddings ([yet](TODO)), so to run a search, we need to calculate the dot product for every embedding in our data set and keep the top results. And since we cannot start execution of the LLM until we get the necessary context, optimizing this step is crucial.
+The piece relevant to this blog post is that similarity metric, which is just a function that spits out a number that's higher if vectors are more similar. For similarity search, a common metric is [cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity). However, for normalized vectors (vectors with unit magnitude), cosine similarity yields an [equivalent ranking](https://milvus.io/docs/v1.1.1/metric.md) to the [dot product](https://en.wikipedia.org/wiki/Dot_product). We do not yet build an index over our embeddings, so to run a search, we need to calculate the dot product for every embedding in our data set and keep the top results. And since we cannot start execution of the LLM until we get the necessary context, optimizing this step is crucial.
 
 ## The target
 
@@ -63,6 +91,17 @@ func DotUnroll4(a, b []float32) float32 {
 ```
 
 In our unrolled code, the dependencies between multiply instructions are removed, enabling the CPU to take more advantage of pipelining. This trims 27% from our naive implementation.
+
+<div class="chart-container">
+    <div class="bar">
+        <span>DotNaive</span>
+        <div class="bar-value" style="width: 100%;">60%</div>
+    </div>
+    <div class="bar">
+        <span>DotUnroll4</span>
+        <div class="bar-value" style="width: 72.3%;">40%</div>
+    </div>
+</div>
 
 ```
     │  naive.txt  │            unroll4.txt             │
@@ -140,9 +179,9 @@ func DotBCE(a, b []float32) float32 {
 }
 ```
 
-Interestingly, the benchmark for this updated implementation shows a performance impact even greater than just using the `-B` flag! This one yields an 11% improvement compared to the 2.5% from `-B`. I actually don't have a good explanation for this. I'd love to hear if someone has an idea of why the difference is larger. 
+Interestingly, the benchmark for this updated implementation shows a performance impact even greater than just using the `-B` flag! This one yields an 11% improvement compared to the 2.5% from `-B`. I actually don't have a good explanation for this. I'd love to hear if someone has an idea of why the difference is larger.
 
-<aside> 
+<aside>
 
 Exercise for the reader: why is it significant that we slice like `a[i:i+4:i+4]` rather than just `a[i:i+4]`?
 

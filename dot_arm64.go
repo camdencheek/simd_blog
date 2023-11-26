@@ -2,17 +2,8 @@
 
 package main
 
-import (
-// "github.com/klauspost/cpuid/v2"
-)
-
 func init() {
-	// hasDotProduct := cpuid.CPU.Supports(cpuid.ASIMD, cpuid.ASIMDDP)
-	// if simdEnabled && hasDotProduct {
-	// 	dotArch = dotSIMD
-	// }
-
-	DotSIMD = dotSIMD
+	int8Dots = append(int8Dots, DotNEON)
 }
 
-func dotSIMD(a, b []int8) int32
+func DotNEON(a, b []int8) int32

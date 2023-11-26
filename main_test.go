@@ -2,6 +2,9 @@ package main
 
 import (
 	"math/rand"
+	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,86 +33,69 @@ var (
 	testProbeF32 = generateTestFloats(dims, 1)
 	testDataI8   = generateTestInts(dims, 512*1024) // 3GiB
 	testProbeI8  = generateTestInts(dims, 1)
+)
 
+func TestDot(t *testing.T) {
+	t.Run("float32", func(t *testing.T) {
+		expected := DotNaive(testProbeF32, testDataF32[:dims])
+		for _, f := range f32Dots {
+			t.Run(funcName(f), func(t *testing.T) {
+				got := f(testProbeF32, testDataF32[:dims])
+				require.InEpsilon(t, expected, got, 0.0001)
+			})
+		}
+	})
+	t.Run("int8", func(t *testing.T) {
+		expected := DotInt8Naive(testProbeI8, testDataI8[:dims])
+		for _, f := range int8Dots {
+			t.Run(funcName(f), func(t *testing.T) {
+				got := f(testProbeI8, testDataI8[:dims])
+				require.Equal(t, expected, got)
+			})
+		}
+	})
+}
+
+var (
+	// Global destination vars to keep benchmarks
+	// from getting optimized away.
 	blackholeF32 float32
 	blackholeI32 int32
 )
 
-func TestDot(t *testing.T) {
-	naive := DotNaive(testProbeF32, testDataF32[:dims])
+func benchmarkF32(b *testing.B, f DotF32) {
+	searchedVectors := 0
+	for i := 0; i < b.N; i++ {
+		for i := 0; i < len(testDataF32); i += dims {
+			blackholeF32 = f(testProbeF32, testDataF32[i:i+dims])
+		}
+		searchedVectors += len(testDataF32) / dims
+	}
+	b.ReportMetric(float64(searchedVectors)/float64(b.Elapsed().Seconds()), "vecs/s")
+}
 
-	unroll4 := DotUnroll4(testProbeF32, testDataF32[:dims])
-	require.InEpsilon(t, naive, unroll4, 0.01)
-
-	unroll8 := DotUnroll8(testProbeF32, testDataF32[:dims])
-	require.InEpsilon(t, naive, unroll8, 0.01)
-
-	bce := DotBCE(testProbeF32, testDataF32[:dims])
-	require.InEpsilon(t, naive, bce, 0.01)
-
-	naiveInt8 := DotNaiveInt8(testProbeI8, testDataI8[:dims])
-
-	optimizedInt8 := DotInt8(testProbeI8, testDataI8[:dims])
-	require.Equal(t, naiveInt8, optimizedInt8)
-
-	simdInt8 := DotSIMD(testProbeI8, testDataI8[:dims])
-	require.Equal(t, naiveInt8, simdInt8)
+func benchmarkI8(b *testing.B, f DotI8) {
+	searchedVectors := 0
+	for i := 0; i < b.N; i++ {
+		for i := 0; i < len(testDataF32); i += dims {
+			blackholeI32 = f(testProbeI8, testDataI8[i:i+dims])
+		}
+		searchedVectors += len(testDataF32) / dims
+	}
+	b.ReportMetric(float64(searchedVectors)/float64(b.Elapsed().Seconds()), "vecs/s")
 }
 
 func BenchmarkDot(b *testing.B) {
-	b.Run("naive", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			for i := 0; i < len(testDataF32); i += dims {
-				blackholeF32 = DotNaive(testProbeF32, testDataF32[i:i+dims])
-			}
-		}
-	})
+	for _, f := range f32Dots {
+		b.Run(funcName(f), func(b *testing.B) { benchmarkF32(b, f) })
+	}
+	for _, f := range int8Dots {
+		b.Run(funcName(f), func(b *testing.B) { benchmarkI8(b, f) })
+	}
+}
 
-	b.Run("unroll4", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			for i := 0; i < len(testDataF32); i += dims {
-				blackholeF32 = DotUnroll4(testProbeF32, testDataF32[i:i+dims])
-			}
-		}
-	})
-
-	b.Run("unroll8", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			for i := 0; i < len(testDataF32); i += dims {
-				blackholeF32 = DotUnroll8(testProbeF32, testDataF32[i:i+dims])
-			}
-		}
-	})
-
-	b.Run("bce", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			for i := 0; i < len(testDataF32); i += dims {
-				blackholeF32 = DotBCE(testProbeF32, testDataF32[i:i+dims])
-			}
-		}
-	})
-
-	b.Run("naive int8", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			for i := 0; i < len(testDataI8); i += dims {
-				blackholeI32 = DotNaiveInt8(testProbeI8, testDataI8[i:i+dims])
-			}
-		}
-	})
-
-	b.Run("int8", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			for i := 0; i < len(testDataI8); i += dims {
-				blackholeI32 = DotInt8(testProbeI8, testDataI8[i:i+dims])
-			}
-		}
-	})
-
-	b.Run("simd", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			for i := 0; i < len(testDataI8); i += dims {
-				blackholeI32 = DotSIMD(testProbeI8, testDataI8[i:i+dims])
-			}
-		}
-	})
+func funcName(i interface{}) string {
+	fullName := runtime.FuncForPC(reflect.ValueOf(i).Pointer()).Name()
+	parts := strings.Split(fullName, ".")
+	return parts[len(parts)-1]
 }
