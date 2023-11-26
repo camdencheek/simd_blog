@@ -3,6 +3,7 @@
         display: grid;
         grid-template-columns: max-content auto;
         width: 80%;
+        max-width: 800px;
         margin: 20px auto;
         overflow: hidden;
     }
@@ -91,9 +92,9 @@ In our unrolled code, the dependencies between multiply instructions are removed
 
 <div class="chart-container">
 <div class="bar-text" style="grid-row: 1;"><code>DotNaive</code></div>
-<div class="bar-value" style="grid-row: 1; width: 40%"><span>TODO vectors/s</span></div>
+<div class="bar-value" style="grid-row: 1; width: 40%"><span>TODO vec/s</span></div>
 <div class="bar-text" style="grid-row: 2;"><code>DotUnroll4</code></div>
-<div class="bar-value" style="grid-row: 2; width: 100%;"><span>TODO vectors/s</span></div>
+<div class="bar-value" style="grid-row: 2; width: 100%;"><span>TODO vec/s</span></div>
 </div>
 
 Note that we can actually improve this slightly more by twiddling with the number of iterations we unroll. On the benchmark machine, 8 seemed to be optimal, but on my laptop, 4 performs best. However, the improvement is quite platform dependent and fairly minimal, so for the rest of the post, I'll stick with an unroll depth of 4 for readability.
@@ -136,7 +137,7 @@ To assess the impact of bounds checking, a trick I recently learned is to use th
 
 TODO: insert benchmarks
 
-That's small enough that it probably wouldn't even be worth poking at. However, running this locally on an M1 mac yields a difference of over 30%, so I'm still going to go through the exercise of removing these checks.
+That's small enough that it probably wouldn't even be worth poking at. However, running this locally on an M1 Macbook yields a difference of over 30%, so I'm still going to go through the exercise of removing these checks.
 
 If we can convince the compiler that these reads can never be out of bounds, it won't insert these runtime checks. This technique is known as "bounds-checking elimination", and the same pattern can be applied to many different memory-safe compiled languages.
 
