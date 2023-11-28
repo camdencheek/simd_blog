@@ -1,0 +1,16 @@
+camdencheek@benchmarking-1:~$ ./embeddings.test -test.run=xxx -test.bench . -test.benchtime=5s
+goos: linux
+goarch: amd64
+pkg: github.com/camdencheek/simd_blog
+cpu: Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz
+BenchmarkDot/DotNaive-44                       9         556871489 ns/op            941489 vecs/s
+BenchmarkDot/DotUnroll4-44                    14         405292358 ns/op           1293605 vecs/s
+BenchmarkDot/DotUnroll8-44                    14         403380139 ns/op           1299737 vecs/s
+BenchmarkDot/DotBCE-44                        15         381958225 ns/op           1372632 vecs/s
+BenchmarkDot/DotInt8Naive-44                  10         545001986 ns/op            961993 vecs/s
+BenchmarkDot/DotInt8Unroll4-44                10         511536267 ns/op           1024929 vecs/s
+BenchmarkDot/DotInt8Unroll8-44                10         535428301 ns/op            979194 vecs/s
+BenchmarkDot/DotInt8BCE-44                    13         422853562 ns/op           1239881 vecs/s
+BenchmarkDot/DotAVX2-44                       80          74088165 ns/op           7076545 vecs/s
+BenchmarkDot/DotVNNI-44                       98          60268793 ns/op           8699165 vecs/s
+PASS

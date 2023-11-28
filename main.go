@@ -12,6 +12,10 @@ func DotNaive(a, b []float32) float32 {
 }
 
 func DotUnroll4(a, b []float32) float32 {
+	if len(a)%4 != 0 {
+		panic("slice length must be multiple of 4")
+	}
+
 	sum := float32(0)
 	for i := 0; i < len(a); i += 4 {
 		s0 := a[i] * b[i]
@@ -24,6 +28,10 @@ func DotUnroll4(a, b []float32) float32 {
 }
 
 func DotUnroll8(a, b []float32) float32 {
+	if len(a)%8 != 0 {
+		panic("slice length must be multiple of 4")
+	}
+
 	sum := float32(0)
 	for i := 0; i < len(a); i += 8 {
 		s0 := a[i] * b[i]
@@ -35,6 +43,22 @@ func DotUnroll8(a, b []float32) float32 {
 		s6 := a[i+6] * b[i+6]
 		s7 := a[i+7] * b[i+7]
 		sum += s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7
+	}
+	return sum
+}
+
+func DotBCEOnly(a, b []float32) float32 {
+	if len(a) != len(b) {
+		panic("slices must have equal lengths")
+	}
+
+	if len(a)%4 != 0 {
+		panic("slice length must be multiple of 4")
+	}
+
+	sum := float32(0)
+	for i := 0; i < len(a); i += 1 {
+		sum += a[i] * b[i]
 	}
 	return sum
 }
@@ -124,6 +148,7 @@ var f32Dots = []DotF32{
 	DotUnroll4,
 	DotUnroll8,
 	DotBCE,
+	DotBCEOnly,
 }
 
 var int8Dots = []DotI8{
